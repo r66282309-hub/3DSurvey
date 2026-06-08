@@ -1,46 +1,373 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Inserisci punto 3D</title>
-<link rel="manifest" href="manifest.webmanifest" /><meta name="theme-color" content="#1f2933" /><link rel="apple-touch-icon" href="assets/icon-192.png" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><link rel="stylesheet" href="assets/style.css" />
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="config.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Inserisci punto 3D</title>
+
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#1f2933" />
+<link rel="apple-touch-icon" href="assets/icon-192.png" />
+<link rel="stylesheet" href="assets/style.css" />
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 </head>
+
 <body>
-<header class="topbar"><h1>Survey punto 3D</h1><nav><a href="index.html">Torna alla mappa</a></nav></header>
-<main class="container"><section class="card"><form id="point-form"><div class="grid">
-<div><label for="nome">Nome punto</label><input id="nome" name="nome" required placeholder="Es. Aula grande Surigheddu" /></div>
-<div><label for="data_rilievo">Data rilievo</label><input id="data_rilievo" name="data_rilievo" type="date" /></div>
-<div class="full"><label for="descrizione">Descrizione</label><textarea id="descrizione" name="descrizione" placeholder="Es. Rilievo LiDAR iPhone - Scaniverse"></textarea></div>
-<div><label for="lat">Latitudine</label><input id="lat" name="lat" type="number" step="any" required /></div>
-<div><label for="lon">Longitudine</label><input id="lon" name="lon" type="number" step="any" required /></div>
-<div class="full"><button class="btn secondary" type="button" onclick="useGps()">Usa GPS</button><p class="help">Oppure clicca sulla mappa sotto per impostare le coordinate.</p></div>
-<div class="full"><div id="survey-map"></div><div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><button id="send-queue-btn" class="btn secondary" type="button">Forza invio coda</button><span id="queue-info" class="help">Controllo coda...</span></div></div>
-<div class="full"><label for="glb_file">Carica modello GLB</label><input id="glb_file" name="glb_file" type="file" accept=".glb,model/gltf-binary" /><p class="help">Se selezioni un file .glb, il survey lo carica nel bucket Supabase Storage e salva automaticamente l'URL pubblico.</p></div>
-<div class="full"><label for="modello_glb">URL modello GLB oppure percorso manuale</label><input id="modello_glb" name="modello_glb" placeholder="URL Supabase Storage oppure models/aula_grande.glb" /><p class="help">Puoi lasciare vuoto questo campo se carichi il file sopra. In alternativa puoi incollare un URL già esistente.</p></div>
-<div class="full"><label for="foto_url">URL foto opzionale</label><input id="foto_url" name="foto_url" placeholder="https://..." /></div>
-<div class="full"><label for="note">Note</label><textarea id="note" name="note" placeholder="Note operative, accessibilità, stato rilievo, ecc."></textarea></div>
-<div class="full"><button class="btn" type="submit">Salva punto</button></div>
-</div><div id="status" class="status"></div></form></section></main>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<header class="topbar">
+  <h1>Survey punto 3D</h1>
+  <nav>
+    <a href="index.html">Mappa</a>
+  </nav>
+</header>
+
+<main class="container">
+  <section class="card">
+    <form id="point-form">
+      <div class="grid">
+
+        <div class="full">
+          <label for="nome">Nome punto</label>
+          <input id="nome" name="nome" required placeholder="Es. Aula grande Surigheddu" />
+        </div>
+
+        <div class="full">
+          <label for="descrizione">Descrizione</label>
+          <textarea id="descrizione" name="descrizione" placeholder="Es. Rilievo LiDAR iPhone - Scaniverse"></textarea>
+        </div>
+
+        <div>
+          <label for="lat">Latitudine</label>
+          <input id="lat" name="lat" type="number" step="any" required />
+        </div>
+
+        <div>
+          <label for="lon">Longitudine</label>
+          <input id="lon" name="lon" type="number" step="any" required />
+        </div>
+
+        <div class="full">
+          <button class="btn secondary" type="button" onclick="useGps()">Usa posizione GPS</button>
+          <p class="help">La data viene salvata automaticamente. Le coordinate possono essere acquisite dal GPS o inserite manualmente.</p>
+        </div>
+
+        <div class="full">
+          <label for="glb_file">Carica modello GLB</label>
+          <input id="glb_file" name="glb_file" type="file" accept=".glb,model/gltf-binary" />
+          <p class="help">Il file .glb viene caricato su Supabase Storage e collegato automaticamente al punto.</p>
+        </div>
+
+        <div class="full">
+          <label for="note">Note</label>
+          <textarea id="note" name="note" placeholder="Note operative, accessibilità, stato rilievo, ecc."></textarea>
+        </div>
+
+        <div class="full" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button class="btn" type="submit">Salva punto</button>
+          <button id="send-queue-btn" class="btn secondary" type="button">Forza invio coda</button>
+        </div>
+
+        <div class="full">
+          <span id="queue-info" class="help">Controllo coda...</span>
+        </div>
+
+      </div>
+
+      <div id="status" class="status"></div>
+    </form>
+  </section>
+</main>
+
 <script>
-const cfg=window.APP_CONFIG;const supabaseClient=supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);const latInput=document.getElementById("lat");const lonInput=document.getElementById("lon");const statusBox=document.getElementById("status");const QUEUE_KEY="survey_3d_pending_points";const today=new Date().toISOString().slice(0,10);document.getElementById("data_rilievo").value=today;
-const surveyMap=L.map("survey-map").setView([40.72,8.56],13);L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{attribution:"Tiles &copy; Esri"}).addTo(surveyMap);let selectedMarker=null;
-function setStatus(type,message){statusBox.className="status "+type;statusBox.innerHTML=message}
-function safeName(value){return String(value||"modello").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9_-]+/g,"_").replace(/^_+|_+$/g,"").toLowerCase().slice(0,60)||"modello"}
-function getQueue(){try{return JSON.parse(localStorage.getItem(QUEUE_KEY)||"[]")}catch{return[]}}
-function setQueue(queue){localStorage.setItem(QUEUE_KEY,JSON.stringify(queue));updateQueueInfo()}
-function addToQueue(payload){const queue=getQueue();queue.push({id_locale:crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random(),created_local_at:new Date().toISOString(),payload});setQueue(queue)}
-function updateQueueInfo(){const count=getQueue().length;const info=document.getElementById("queue-info");const btn=document.getElementById("send-queue-btn");if(!info||!btn)return;if(count===0){info.textContent="Coda vuota. Tutti i punti risultano inviati.";btn.disabled=true}else{info.textContent=count===1?"1 punto in coda da inviare.":count+" punti in coda da inviare.";btn.disabled=false}}
-async function uploadGlbIfSelected(nomePunto){const fileInput=document.getElementById("glb_file");if(!fileInput||!fileInput.files||fileInput.files.length===0)return null;if(!navigator.onLine)throw new Error("Non posso caricare il GLB mentre sei offline.");const file=fileInput.files[0];const lowerName=file.name.toLowerCase();if(!lowerName.endsWith(".glb"))throw new Error("Il file selezionato non sembra un .glb.");const maxMb=200;if(file.size>maxMb*1024*1024)throw new Error("File GLB troppo grande per questo survey: supera "+maxMb+" MB.");const timestamp=new Date().toISOString().replaceAll(":","-").replaceAll(".","-");const cleanPointName=safeName(nomePunto);const cleanFileName=safeName(file.name.replace(/\.glb$/i,""));const path=`${cleanPointName}/${timestamp}_${cleanFileName}.glb`;setStatus("ok","Caricamento modello GLB su Supabase Storage...");const{error:uploadError}=await supabaseClient.storage.from(cfg.STORAGE_BUCKET).upload(path,file,{contentType:"model/gltf-binary",upsert:false});if(uploadError)throw uploadError;const{data}=supabaseClient.storage.from(cfg.STORAGE_BUCKET).getPublicUrl(path);if(!data||!data.publicUrl)throw new Error("Upload riuscito, ma non riesco a ottenere l'URL pubblico del GLB.");return data.publicUrl}
-async function insertPoint(payload){const{error}=await supabaseClient.from(cfg.TABLE_NAME).insert(payload);if(error)throw error}
-async function flushQueue(showMessages=true){const queue=getQueue();if(queue.length===0){if(showMessages)setStatus("ok","Coda vuota. Nessun punto da inviare.");updateQueueInfo();return}if(!navigator.onLine){if(showMessages)setStatus("err","Sei offline. I punti restano in coda.");updateQueueInfo();return}if(showMessages)setStatus("ok","Invio dei punti in coda in corso...");const remaining=[];let sent=0;for(const item of queue){try{await insertPoint(item.payload);sent++}catch(err){console.warn("Invio punto in coda fallito:",err);remaining.push(item)}}setQueue(remaining);if(remaining.length===0){if(showMessages)setStatus("ok",sent===1?"1 punto in coda inviato correttamente.":sent+" punti in coda inviati correttamente.")}else{if(showMessages)setStatus("err",sent+" inviati, "+remaining.length+" ancora in coda. Puoi riprovare più tardi.")}}
-function setPoint(lat,lon){latInput.value=Number(lat).toFixed(7);lonInput.value=Number(lon).toFixed(7);if(selectedMarker)selectedMarker.setLatLng([lat,lon]);else selectedMarker=L.circleMarker([lat,lon],{radius:8,color:"#111827",weight:1.5,fillColor:"#ff8c00",fillOpacity:.9}).addTo(surveyMap);surveyMap.setView([lat,lon],Math.max(surveyMap.getZoom(),17))}
-surveyMap.on("click",e=>setPoint(e.latlng.lat,e.latlng.lng));
-function useGps(){if(!navigator.geolocation){setStatus("err","Geolocalizzazione non supportata dal browser.");return}setStatus("ok","Acquisizione posizione GPS...");navigator.geolocation.getCurrentPosition(pos=>{setPoint(pos.coords.latitude,pos.coords.longitude);setStatus("ok","Coordinate GPS acquisite.")},err=>setStatus("err","Errore GPS: "+err.message),{enableHighAccuracy:true,timeout:10000,maximumAge:0})}
-function resetForm(){document.getElementById("point-form").reset();document.getElementById("data_rilievo").value=today;if(selectedMarker){surveyMap.removeLayer(selectedMarker);selectedMarker=null}}
-document.getElementById("point-form").addEventListener("submit",async function(e){e.preventDefault();const payload={nome:document.getElementById("nome").value.trim(),descrizione:document.getElementById("descrizione").value.trim()||null,lat:Number(latInput.value),lon:Number(lonInput.value),modello_glb:document.getElementById("modello_glb").value.trim()||null,foto_url:document.getElementById("foto_url").value.trim()||null,data_rilievo:document.getElementById("data_rilievo").value||null,note:document.getElementById("note").value.trim()||null};if(!payload.nome||Number.isNaN(payload.lat)||Number.isNaN(payload.lon)){setStatus("err","Compila nome, latitudine e longitudine.");return}if(!navigator.onLine){addToQueue(payload);setStatus("ok","Sei offline: punto salvato in coda locale. Attenzione: il GLB non viene caricato offline.");resetForm();return}try{const uploadedGlbUrl=await uploadGlbIfSelected(payload.nome);if(uploadedGlbUrl)payload.modello_glb=uploadedGlbUrl;await insertPoint(payload);setStatus("ok","Punto salvato correttamente su Supabase"+(uploadedGlbUrl?" con GLB caricato.":"."));resetForm();flushQueue(false)}catch(error){console.error(error);const hasGlbFile=document.getElementById("glb_file")&&document.getElementById("glb_file").files.length>0;if(hasGlbFile){setStatus("err","Errore: "+error.message+"<br>Il file GLB non può essere salvato in coda offline. Riprova con connessione attiva.")}else{addToQueue(payload);setStatus("err","Supabase non ha risposto: punto salvato in coda locale. Puoi forzare l'invio più tardi.");resetForm()}}});
-document.getElementById("send-queue-btn").addEventListener("click",()=>flushQueue(true));window.addEventListener("online",()=>{setStatus("ok","Connessione ripristinata. Provo a inviare la coda...");flushQueue(true)});window.addEventListener("offline",()=>setStatus("err","Connessione assente. I nuovi punti saranno salvati in coda locale. I file GLB però richiedono connessione attiva."));updateQueueInfo();if(navigator.onLine&&getQueue().length>0)flushQueue(false);
+const cfg = window.APP_CONFIG;
+const supabaseClient = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+
+const latInput = document.getElementById("lat");
+const lonInput = document.getElementById("lon");
+const statusBox = document.getElementById("status");
+const QUEUE_KEY = "survey_3d_pending_points";
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function setStatus(type, message) {
+  statusBox.className = "status " + type;
+  statusBox.innerHTML = message;
+}
+
+function safeName(value) {
+  return String(value || "modello")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase()
+    .slice(0, 60) || "modello";
+}
+
+function getQueue() {
+  try {
+    return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function setQueue(queue) {
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  updateQueueInfo();
+}
+
+function addToQueue(payload) {
+  const queue = getQueue();
+
+  queue.push({
+    id_locale: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
+    created_local_at: new Date().toISOString(),
+    payload
+  });
+
+  setQueue(queue);
+}
+
+function updateQueueInfo() {
+  const count = getQueue().length;
+  const info = document.getElementById("queue-info");
+  const btn = document.getElementById("send-queue-btn");
+
+  if (!info || !btn) return;
+
+  if (count === 0) {
+    info.textContent = "Coda vuota. Tutti i punti risultano inviati.";
+    btn.disabled = true;
+  } else {
+    info.textContent = count === 1
+      ? "1 punto in coda da inviare."
+      : count + " punti in coda da inviare.";
+    btn.disabled = false;
+  }
+}
+
+async function uploadGlbIfSelected(nomePunto) {
+  const fileInput = document.getElementById("glb_file");
+
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    return null;
+  }
+
+  if (!navigator.onLine) {
+    throw new Error("Non posso caricare il GLB mentre sei offline.");
+  }
+
+  const file = fileInput.files[0];
+  const lowerName = file.name.toLowerCase();
+
+  if (!lowerName.endsWith(".glb")) {
+    throw new Error("Il file selezionato non sembra un .glb.");
+  }
+
+  const maxMb = 200;
+
+  if (file.size > maxMb * 1024 * 1024) {
+    throw new Error("File GLB troppo grande per questo survey: supera " + maxMb + " MB.");
+  }
+
+  const timestamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
+  const cleanPointName = safeName(nomePunto);
+  const cleanFileName = safeName(file.name.replace(/\.glb$/i, ""));
+  const path = `${cleanPointName}/${timestamp}_${cleanFileName}.glb`;
+
+  setStatus("ok", "Caricamento modello GLB su Supabase Storage...");
+
+  const { error: uploadError } = await supabaseClient
+    .storage
+    .from(cfg.STORAGE_BUCKET)
+    .upload(path, file, {
+      contentType: "model/gltf-binary",
+      upsert: false
+    });
+
+  if (uploadError) throw uploadError;
+
+  const { data } = supabaseClient
+    .storage
+    .from(cfg.STORAGE_BUCKET)
+    .getPublicUrl(path);
+
+  if (!data || !data.publicUrl) {
+    throw new Error("Upload riuscito, ma non riesco a ottenere l'URL pubblico del GLB.");
+  }
+
+  return data.publicUrl;
+}
+
+async function insertPoint(payload) {
+  const { error } = await supabaseClient
+    .from(cfg.TABLE_NAME)
+    .insert(payload);
+
+  if (error) throw error;
+}
+
+async function flushQueue(showMessages = true) {
+  const queue = getQueue();
+
+  if (queue.length === 0) {
+    if (showMessages) setStatus("ok", "Coda vuota. Nessun punto da inviare.");
+    updateQueueInfo();
+    return;
+  }
+
+  if (!navigator.onLine) {
+    if (showMessages) setStatus("err", "Sei offline. I punti restano in coda.");
+    updateQueueInfo();
+    return;
+  }
+
+  if (showMessages) setStatus("ok", "Invio dei punti in coda in corso...");
+
+  const remaining = [];
+  let sent = 0;
+
+  for (const item of queue) {
+    try {
+      await insertPoint(item.payload);
+      sent++;
+    } catch (err) {
+      console.warn("Invio punto in coda fallito:", err);
+      remaining.push(item);
+    }
+  }
+
+  setQueue(remaining);
+
+  if (remaining.length === 0) {
+    if (showMessages) {
+      setStatus("ok", sent === 1
+        ? "1 punto in coda inviato correttamente."
+        : sent + " punti in coda inviati correttamente.");
+    }
+  } else {
+    if (showMessages) {
+      setStatus("err", sent + " inviati, " + remaining.length + " ancora in coda. Puoi riprovare più tardi.");
+    }
+  }
+}
+
+function useGps() {
+  if (!navigator.geolocation) {
+    setStatus("err", "Geolocalizzazione non supportata dal browser.");
+    return;
+  }
+
+  setStatus("ok", "Acquisizione posizione GPS...");
+
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      latInput.value = Number(pos.coords.latitude).toFixed(7);
+      lonInput.value = Number(pos.coords.longitude).toFixed(7);
+      setStatus("ok", "Coordinate GPS acquisite.");
+    },
+    err => {
+      setStatus("err", "Errore GPS: " + err.message);
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
+    }
+  );
+}
+
+function resetForm() {
+  document.getElementById("point-form").reset();
+}
+
+document.getElementById("point-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+
+  const payload = {
+    nome: document.getElementById("nome").value.trim(),
+    descrizione: document.getElementById("descrizione").value.trim() || null,
+    lat: Number(latInput.value),
+    lon: Number(lonInput.value),
+    modello_glb: null,
+    foto_url: null,
+    data_rilievo: todayIsoDate(),
+    note: document.getElementById("note").value.trim() || null
+  };
+
+  if (!payload.nome || Number.isNaN(payload.lat) || Number.isNaN(payload.lon)) {
+    setStatus("err", "Compila nome, latitudine e longitudine.");
+    return;
+  }
+
+  if (!navigator.onLine) {
+    addToQueue(payload);
+    setStatus("ok", "Sei offline: punto salvato in coda locale. Attenzione: il GLB non viene caricato offline.");
+    resetForm();
+    return;
+  }
+
+  try {
+    const uploadedGlbUrl = await uploadGlbIfSelected(payload.nome);
+
+    if (uploadedGlbUrl) {
+      payload.modello_glb = uploadedGlbUrl;
+    }
+
+    await insertPoint(payload);
+
+    setStatus("ok", "Punto salvato correttamente su Supabase" + (uploadedGlbUrl ? " con GLB caricato." : "."));
+    resetForm();
+
+    flushQueue(false);
+  } catch (error) {
+    console.error(error);
+
+    const hasGlbFile = document.getElementById("glb_file") && document.getElementById("glb_file").files.length > 0;
+
+    if (hasGlbFile) {
+      setStatus("err", "Errore: " + error.message + "<br>Il file GLB non può essere salvato in coda offline. Riprova con connessione attiva.");
+    } else {
+      addToQueue(payload);
+      setStatus("err", "Supabase non ha risposto: punto salvato in coda locale. Puoi forzare l'invio più tardi.");
+      resetForm();
+    }
+  }
+});
+
+document.getElementById("send-queue-btn").addEventListener("click", function() {
+  flushQueue(true);
+});
+
+window.addEventListener("online", function() {
+  setStatus("ok", "Connessione ripristinata. Provo a inviare la coda...");
+  flushQueue(true);
+});
+
+window.addEventListener("offline", function() {
+  setStatus("err", "Connessione assente. I nuovi punti saranno salvati in coda locale. I file GLB però richiedono connessione attiva.");
+});
+
+updateQueueInfo();
+
+if (navigator.onLine && getQueue().length > 0) {
+  flushQueue(false);
+}
 </script>
-<script>if("serviceWorker"in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(err=>console.warn("Service worker non registrato:",err)))}</script>
-</body></html>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(err => {
+      console.warn("Service worker non registrato:", err);
+    });
+  });
+}
+</script>
+
+</body>
+</html>
