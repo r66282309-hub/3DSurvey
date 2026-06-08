@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inserisci punto 3D</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#1f2933" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="assets/style.css" />
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+</head>
+
+<body>
+  <header class="topbar">
+    <h1>Survey punto 3D</h1>
+    <nav>
+      <a href="index.html">Torna alla mappa</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <form id="point-form">
+        <div class="grid">
+          <div>
+            <label for="nome">Nome punto</label>
+            <input id="nome" name="nome" required placeholder="Es. Aula grande Surigheddu" />
+          </div>
+
+          <div>
+            <label for="data_rilievo">Data rilievo</label>
+            <input id="data_rilievo" name="data_rilievo" type="date" />
+          </div>
+
+          <div class="full">
+            <label for="descrizione">Descrizione</label>
+            <textarea id="descrizione" name="descrizione" placeholder="Es. Rilievo LiDAR iPhone - Scaniverse"></textarea>
+          </div>
+
+          <div>
+            <label for="lat">Latitudine</label>
+            <input id="lat" name="lat" type="number" step="any" required />
+          </div>
+
+          <div>
+            <label for="lon">Longitudine</label>
+            <input id="lon" name="lon" type="number" step="any" required />
+          </div>
+
+          <div class="full">
+            <button class="btn secondary" type="button" onclick="useGps()">Usa GPS</button>
+            <p class="help">Oppure clicca sulla mappa sotto per impostare le coordinate.</p>
+          </div>
+
+          <div class="full">
+            <div id="survey-map"></div>
+            <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button id="send-queue-btn" class="btn secondary" type="button">Forza invio coda</button>
+              <span id="queue-info" class="help">Controllo coda...</span>
+            </div>
+          </div>
+
+          <div class="full">
+            <label for="modello_glb">Percorso o URL modello GLB</label>
+            <input id="modello_glb" name="modello_glb" placeholder="models/aula_grande.glb oppure https://..." />
+            <p class="help">
+              Il file GLB non viene caricato dal survey. Prima lo carichi su GitHub nella cartella <b>models</b>,
+              poi qui scrivi il percorso, per esempio <b>models/stanza1.glb</b>.
+            </p>
+          </div>
+
+          <div class="full">
+            <label for="foto_url">URL foto opzionale</label>
+            <input id="foto_url" name="foto_url" placeholder="https://..." />
+          </div>
+
+          <div class="full">
+            <label for="note">Note</label>
+            <textarea id="note" name="note" placeholder="Note operative, accessibilità, stato rilievo, ecc."></textarea>
+          </div>
+
+          <div class="full">
+            <button class="btn" type="submit">Salva punto</button>
+          </div>
+        </div>
+
+        <div id="status" class="status"></div>
+      </form>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    const cfg = window.APP_CONFIG;
+    const supabaseClient = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+
+    const latInput = document.getElementById("lat");
+    const lonInput = document.getElementById("lon");
+    const statusBox = document.getElementById("status");
+    const QUEUE_KEY = "survey_3d_pending_points";
+
+    const today = new Date().toISOString().slice(0, 10);
+    document.getElementById("data_rilievo").value = today;
+
+    const surveyMap = L.map("survey-map").setView([40.72, 8.56], 13);
+
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {
+        attribution: "Tiles &copy; Esri"
+      }
+    ).addTo(surveyMap);
+
+    let selectedMarker = null;
+
+    function setStatus(type, message) {
+      statusBox.className = "status " + type;
+      statusBox.innerHTML = message;
+    }
+
+    function getQueue() {
+      try {
+        return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]");
+      } catch {
+        return [];
+      }
+    }
+
+    function setQueue(queue) {
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+      updateQueueInfo();
+    }
+
+    function addToQueue(payload) {
+      const queue = getQueue();
+      queue.push({
+        id_locale: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
+        created_local_at: new Date().toISOString(),
+        payload
+      });
+      setQueue(queue);
+    }
+
+    function updateQueueInfo() {
+      const count = getQueue().length;
+      const info = document.getElementById("queue-info");
+      const btn = document.getElementById("send-queue-btn");
+
+      if (!info || !btn) return;
+
+      if (count === 0) {
+        info.textContent = "Coda vuota. Tutti i punti risultano inviati.";
+        btn.disabled = true;
+      } else {
+        info.textContent = count === 1
+          ? "1 punto in coda da inviare."
+          : count + " punti in coda da inviare.";
+        btn.disabled = false;
+      }
+    }
+
+    async function insertPoint(payload) {
+      const { error } = await supabaseClient
+        .from(cfg.TABLE_NAME)
+        .insert(payload);
+
+      if (error) throw error;
+    }
+
+    async function flushQueue(showMessages = true) {
+      const queue = getQueue();
+
+      if (queue.length === 0) {
+        if (showMessages) setStatus("ok", "Coda vuota. Nessun punto da inviare.");
+        updateQueueInfo();
+        return;
+      }
+
+      if (!navigator.onLine) {
+        if (showMessages) setStatus("err", "Sei offline. I punti restano in coda.");
+        updateQueueInfo();
+        return;
+      }
+
+      if (showMessages) setStatus("ok", "Invio dei punti in coda in corso...");
+
+      const remaining = [];
+      let sent = 0;
+
+      for (const item of queue) {
+        try {
+          await insertPoint(item.payload);
+          sent++;
+        } catch (err) {
+          console.warn("Invio punto in coda fallito:", err);
+          remaining.push(item);
+        }
+      }
+
+      setQueue(remaining);
+
+      if (remaining.length === 0) {
+        if (showMessages) {
+          setStatus("ok", sent === 1
+            ? "1 punto in coda inviato correttamente."
+            : sent + " punti in coda inviati correttamente.");
+        }
+      } else {
+        if (showMessages) {
+          setStatus("err", sent + " inviati, " + remaining.length + " ancora in coda. Puoi riprovare più tardi.");
+        }
+      }
+    }
+
+    function setPoint(lat, lon) {
+      latInput.value = Number(lat).toFixed(7);
+      lonInput.value = Number(lon).toFixed(7);
+
+      if (selectedMarker) {
+        selectedMarker.setLatLng([lat, lon]);
+      } else {
+        selectedMarker = L.circleMarker([lat, lon], {
+          radius: 8,
+          color: "#111827",
+          weight: 1.5,
+          fillColor: "#ff8c00",
+          fillOpacity: 0.9
+        }).addTo(surveyMap);
+      }
+
+      surveyMap.setView([lat, lon], Math.max(surveyMap.getZoom(), 17));
+    }
+
+    surveyMap.on("click", function(e) {
+      setPoint(e.latlng.lat, e.latlng.lng);
+    });
+
+    function useGps() {
+      if (!navigator.geolocation) {
+        setStatus("err", "Geolocalizzazione non supportata dal browser.");
+        return;
+      }
+
+      setStatus("ok", "Acquisizione posizione GPS...");
+
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          setPoint(pos.coords.latitude, pos.coords.longitude);
+          setStatus("ok", "Coordinate GPS acquisite.");
+        },
+        err => {
+          setStatus("err", "Errore GPS: " + err.message);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
+        }
+      );
+    }
+
+    function resetForm() {
+      document.getElementById("point-form").reset();
+      document.getElementById("data_rilievo").value = today;
+
+      if (selectedMarker) {
+        surveyMap.removeLayer(selectedMarker);
+        selectedMarker = null;
+      }
+    }
+
+    document.getElementById("point-form").addEventListener("submit", async function(e) {
+      e.preventDefault();
+
+      const payload = {
+        nome: document.getElementById("nome").value.trim(),
+        descrizione: document.getElementById("descrizione").value.trim() || null,
+        lat: Number(latInput.value),
+        lon: Number(lonInput.value),
+        modello_glb: document.getElementById("modello_glb").value.trim() || null,
+        foto_url: document.getElementById("foto_url").value.trim() || null,
+        data_rilievo: document.getElementById("data_rilievo").value || null,
+        note: document.getElementById("note").value.trim() || null
+      };
+
+      if (!payload.nome || Number.isNaN(payload.lat) || Number.isNaN(payload.lon)) {
+        setStatus("err", "Compila nome, latitudine e longitudine.");
+        return;
+      }
+
+      if (!navigator.onLine) {
+        addToQueue(payload);
+        setStatus("ok", "Sei offline: punto salvato in coda locale. Verrà inviato quando torna la connessione.");
+        resetForm();
+        return;
+      }
+
+      try {
+        await insertPoint(payload);
+        setStatus("ok", "Punto salvato correttamente su Supabase.");
+        resetForm();
+
+        // Se ci sono punti vecchi in coda, prova a inviarli subito.
+        flushQueue(false);
+      } catch (error) {
+        console.error(error);
+        addToQueue(payload);
+        setStatus("err", "Supabase non ha risposto: punto salvato in coda locale. Puoi forzare l'invio più tardi.");
+        resetForm();
+      }
+    });
+
+    document.getElementById("send-queue-btn").addEventListener("click", function() {
+      flushQueue(true);
+    });
+
+    window.addEventListener("online", function() {
+      setStatus("ok", "Connessione ripristinata. Provo a inviare la coda...");
+      flushQueue(true);
+    });
+
+    window.addEventListener("offline", function() {
+      setStatus("err", "Connessione assente. I nuovi punti saranno salvati in coda locale.");
+    });
+
+    updateQueueInfo();
+
+    // Tentativo leggero all'apertura, utile se ci sono punti rimasti in coda.
+    if (navigator.onLine && getQueue().length > 0) {
+      flushQueue(false);
+    }
+  </script>
+
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(err => {
+          console.warn("Service worker non registrato:", err);
+        });
+      });
+    }
+  </script>
+
+</body>
+</html>

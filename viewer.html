@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Viewer 3D</title>
+
+  <link rel="stylesheet" href="assets/style.css" />
+
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+</head>
+
+<body class="viewer-page">
+  <header class="viewer-header">
+    <h1 id="viewer-title">Viewer 3D</h1>
+    <div>
+      <a class="btn secondary" href="index.html">Mappa</a>
+      <a id="download-link" class="btn" href="#" target="_blank" rel="noopener">Scarica GLB</a>
+    </div>
+  </header>
+
+  <model-viewer
+    id="viewer"
+    camera-controls
+    touch-action="pan-y"
+    interaction-prompt="auto"
+    shadow-intensity="0.8"
+    exposure="1"
+    ar
+    ar-modes="webxr scene-viewer quick-look">
+  </model-viewer>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const model = params.get("model");
+    const title = params.get("title") || "Modello 3D";
+
+    document.getElementById("viewer-title").textContent = title;
+
+    if (model) {
+      document.getElementById("viewer").src = model;
+      document.getElementById("download-link").href = model;
+    } else {
+      document.body.innerHTML = `
+        <header class="viewer-header">
+          <h1>Viewer 3D</h1>
+          <a class="btn secondary" href="index.html">Mappa</a>
+        </header>
+        <div class="empty-viewer">
+          Nessun modello specificato. Apri il viewer dalla mappa.
+        </div>
+      `;
+    }
+  </script>
+</body>
+</html>
