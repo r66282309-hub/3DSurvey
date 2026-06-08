@@ -1,3 +1,1 @@
-Carica qui i file .glb esportati da Scaniverse.
-Esempio: aula_grande.glb
-Nel survey scrivi: models/aula_grande.glb
+Con la nuova versione i GLB possono stare su Supabase Storage. Questa cartella resta utile solo per modelli locali piccoli.

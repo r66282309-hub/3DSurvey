@@ -1,161 +1,30 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WebGIS punti 3D</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <meta name="theme-color" content="#1f2933" />
-  <link rel="apple-touch-icon" href="assets/icon-192.png" />
-
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="assets/style.css" />
-
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js"></script>
+  <link rel="manifest" href="manifest.webmanifest" /><meta name="theme-color" content="#1f2933" /><link rel="apple-touch-icon" href="assets/icon-192.png" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><link rel="stylesheet" href="assets/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="config.js"></script>
 </head>
-
 <body>
-  <header class="topbar">
-    <h1>WebGIS punti 3D</h1>
-    <nav>
-      <a class="secondary" href="#" onclick="loadPoints(); return false;">Aggiorna</a>
-      <a href="survey.html">Inserisci punto</a>
-    </nav>
-  </header>
-
-  <main id="map"></main>
-
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <script>
-    const cfg = window.APP_CONFIG;
-    const supabaseClient = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-
-    const map = L.map("map", {
-      zoomControl: true
-    }).setView([40.72, 8.56], 13);
-
-    // Basemap Esri World Imagery
-    const esriImagery = L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      {
-        attribution: "Tiles &copy; Esri"
-      }
-    ).addTo(map);
-
-    // Basemap Esri topo chiara alternativa
-    const esriTopo = L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
-      {
-        attribution: "Tiles &copy; Esri"
-      }
-    );
-
-    L.control.layers({
-      "Esri Satellite": esriImagery,
-      "Esri Topografica": esriTopo
-    }).addTo(map);
-
-    let pointsLayer = L.layerGroup().addTo(map);
-
-    function escapeHtml(value) {
-      if (value === null || value === undefined) return "";
-      return String(value)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-    }
-
-    function normalizeModelPath(path) {
-      if (!path) return "";
-      const p = String(path).trim();
-      if (p.startsWith("http://") || p.startsWith("https://")) return p;
-      return (cfg.MODEL_BASE_PATH || "") + p;
-    }
-
-    function popupHtml(p) {
-      const nome = escapeHtml(p.nome || "Punto senza nome");
-      const descrizione = escapeHtml(p.descrizione || "");
-      const note = escapeHtml(p.note || "");
-      const data = escapeHtml(p.data_rilievo || "");
-      const modello = normalizeModelPath(p.modello_glb || "");
-      const foto = p.foto_url ? escapeHtml(p.foto_url) : "";
-
-      const viewerLink = modello
-        ? `viewer.html?model=${encodeURIComponent(modello)}&title=${encodeURIComponent(p.nome || "Modello 3D")}`
-        : "";
-
-      return `
-        <div class="popup-title">${nome}</div>
-        ${descrizione ? `<div class="popup-desc">${descrizione}</div>` : ""}
-        ${data ? `<div class="popup-meta">Data rilievo: ${data}</div>` : ""}
-        ${note ? `<div class="popup-meta">${note}</div>` : ""}
-        <div class="popup-meta">Lat: ${Number(p.lat).toFixed(6)} | Lon: ${Number(p.lon).toFixed(6)}</div>
-
-        <div class="popup-actions">
-          ${viewerLink ? `<a href="${viewerLink}" target="_blank" rel="noopener">Visualizza punto AR</a>` : ""}
-          ${modello ? `<a class="secondary" href="${escapeHtml(modello)}" target="_blank" rel="noopener">GLB</a>` : ""}
-          ${foto ? `<a class="secondary" href="${foto}" target="_blank" rel="noopener">Foto</a>` : ""}
-        </div>
-      `;
-    }
-
-    function addPoint(p) {
-      if (p.lat === null || p.lon === null) return;
-
-      const marker = L.circleMarker([p.lat, p.lon], {
-        radius: 8,
-        color: "#111827",
-        weight: 1.5,
-        fillColor: "#ff8c00",
-        fillOpacity: 0.9
-      });
-
-      marker.bindPopup(popupHtml(p));
-      marker.addTo(pointsLayer);
-    }
-
-    async function loadPoints() {
-      pointsLayer.clearLayers();
-
-      const { data, error } = await supabaseClient
-        .from(cfg.TABLE_NAME)
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        alert("Errore caricamento punti: " + error.message);
-        console.error(error);
-        return;
-      }
-
-      const bounds = [];
-
-      (data || []).forEach(p => {
-        addPoint(p);
-        if (p.lat !== null && p.lon !== null) bounds.push([p.lat, p.lon]);
-      });
-
-      if (bounds.length > 0) {
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
-      }
-    }
-
-    loadPoints();
-  </script>
-
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch(err => {
-          console.warn("Service worker non registrato:", err);
-        });
-      });
-    }
-  </script>
-
-</body>
-</html>
+<header class="topbar"><h1>WebGIS punti 3D</h1><nav><a class="secondary" href="#" onclick="loadPoints();return false;">Aggiorna</a><a href="survey.html">Inserisci punto</a></nav></header>
+<main id="map"></main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const cfg=window.APP_CONFIG;
+const supabaseClient=supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);
+const map=L.map("map").setView([40.72,8.56],13);
+const esriImagery=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{attribution:"Tiles &copy; Esri"}).addTo(map);
+const esriTopo=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",{attribution:"Tiles &copy; Esri"});
+L.control.layers({"Esri Satellite":esriImagery,"Esri Topografica":esriTopo}).addTo(map);
+let pointsLayer=L.layerGroup().addTo(map);
+function escapeHtml(v){if(v===null||v===undefined)return "";return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
+function normalizeModelPath(path){if(!path)return "";const p=String(path).trim();if(p.startsWith("http://")||p.startsWith("https://"))return p;return(cfg.MODEL_BASE_PATH||"")+p}
+function popupHtml(p){const nome=escapeHtml(p.nome||"Punto senza nome");const descrizione=escapeHtml(p.descrizione||"");const note=escapeHtml(p.note||"");const data=escapeHtml(p.data_rilievo||"");const modello=normalizeModelPath(p.modello_glb||"");const foto=p.foto_url?escapeHtml(p.foto_url):"";const viewerLink=modello?`viewer.html?model=${encodeURIComponent(modello)}&title=${encodeURIComponent(p.nome||"Modello 3D")}`:"";return `<div class="popup-title">${nome}</div>${descrizione?`<div class="popup-desc">${descrizione}</div>`:""}${data?`<div class="popup-meta">Data rilievo: ${data}</div>`:""}${note?`<div class="popup-meta">${note}</div>`:""}<div class="popup-meta">Lat: ${Number(p.lat).toFixed(6)} | Lon: ${Number(p.lon).toFixed(6)}</div><div class="popup-actions">${viewerLink?`<a href="${viewerLink}" target="_blank" rel="noopener">Visualizza punto AR</a>`:""}${modello?`<a class="secondary" href="${escapeHtml(modello)}" target="_blank" rel="noopener">GLB</a>`:""}${foto?`<a class="secondary" href="${foto}" target="_blank" rel="noopener">Foto</a>`:""}</div>`}
+function addPoint(p){if(p.lat===null||p.lon===null)return;const marker=L.circleMarker([p.lat,p.lon],{radius:8,color:"#111827",weight:1.5,fillColor:"#ff8c00",fillOpacity:.9});marker.bindPopup(popupHtml(p));marker.addTo(pointsLayer)}
+async function loadPoints(){pointsLayer.clearLayers();const{data,error}=await supabaseClient.from(cfg.TABLE_NAME).select("*").order("created_at",{ascending:false});if(error){alert("Errore caricamento punti: "+error.message);console.error(error);return}const bounds=[];(data||[]).forEach(p=>{addPoint(p);if(p.lat!==null&&p.lon!==null)bounds.push([p.lat,p.lon])});if(bounds.length>0)map.fitBounds(bounds,{padding:[40,40],maxZoom:18})}
+loadPoints();
+</script>
+<script>if("serviceWorker"in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(err=>console.warn("Service worker non registrato:",err)))}</script>
+</body></html>
