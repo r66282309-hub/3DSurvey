@@ -29,7 +29,24 @@ function popupHtml(p){
  const viewer=modello?`viewer.html?model=${encodeURIComponent(modello)}&title=${encodeURIComponent(p.nome||"Modello 3D")}`:"";
  return `<div class="popup-title">${nome}</div>${desc?`<div class="popup-desc">${desc}</div>`:""}${data?`<div class="popup-meta">Data: ${data}</div>`:""}${note?`<div class="popup-meta">${note}</div>`:""}<div class="popup-meta">Lat: ${Number(p.lat).toFixed(6)} | Lon: ${Number(p.lon).toFixed(6)}</div><div class="popup-actions">${viewer?`<a href="${viewer}" target="_blank">Visualizza punto AR</a>`:""}${f1?`<button class="secondary" onclick="openPhotoModal('${js(f1)}','Foto 1 - ${js(p.nome)}')">Foto 1</button>`:""}${f2?`<button class="secondary" onclick="openPhotoModal('${js(f2)}','Foto 2 - ${js(p.nome)}')">Foto 2</button>`:""}${modello?`<a class="secondary" href="${esc(modello)}" target="_blank">GLB</a>`:""}</div>`;
 }
-function addPoint(p){if(p.lat===null||p.lon===null)return;L.circleMarker([p.lat,p.lon],{radius:8,color:"#111827",weight:1.5,fillColor:"#ff8c00",fillOpacity:.9}).bindPopup(popupHtml(p)).addTo(pointsLayer)}
+function addPoint(p){
+ if(p.lat===null||p.lon===null)return;
+ const marker=L.circleMarker([p.lat,p.lon],{
+  radius:8,
+  color:"#111827",
+  weight:1.5,
+  fillColor:"#ff8c00",
+  fillOpacity:.9
+ });
+ marker.bindPopup(popupHtml(p));
+ marker.bindTooltip(p.nome||"Punto",{
+  permanent:true,
+  direction:"right",
+  offset:[10,0],
+  className:"point-label"
+ });
+ marker.addTo(pointsLayer);
+}
 async function loadPoints(){pointsLayer.clearLayers();const {data,error}=await supabaseClient.from(cfg.TABLE_NAME).select("*").order("created_at",{ascending:false});if(error){alert("Errore caricamento punti: "+error.message);return}const b=[];(data||[]).forEach(p=>{addPoint(p);if(p.lat!==null&&p.lon!==null)b.push([p.lat,p.lon])});if(b.length)map.fitBounds(b,{padding:[40,40],maxZoom:18})}
 loadPoints();
 </script>
