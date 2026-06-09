@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Survey punto 3D</title>
-<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#1f2933">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="assets/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="config.js"></script>
 </head>
 <body>
@@ -14,137 +13,42 @@
 <div class="full"><label>Descrizione</label><textarea id="descrizione"></textarea></div>
 <div><label>Latitudine</label><input id="lat" type="number" step="any" required></div>
 <div><label>Longitudine</label><input id="lon" type="number" step="any" required></div>
-<div class="full"><button class="btn secondary" type="button" onclick="useGps()">Usa posizione GPS</button><p class="help">La data viene salvata automaticamente.</p></div>
+<div class="full"><button class="btn secondary" type="button" onclick="useGps()">Usa posizione GPS</button><p class="help">La data viene salvata automaticamente. Se manca segnale, dati e file restano in coda offline.</p></div>
 <div class="full"><label>Carica modello GLB</label><input id="glb_file" type="file" accept=".glb,model/gltf-binary"></div>
 <div><label>Foto 1</label><input id="foto1_file" type="file" accept="image/*" capture="environment"></div>
 <div><label>Foto 2</label><input id="foto2_file" type="file" accept="image/*" capture="environment"></div>
-<div class="full"><p class="help">Le foto vengono ridimensionate automaticamente entro 1600×1200 o 1200×1600 e caricate su Supabase Storage.</p></div>
+<div class="full"><p class="help">Le foto vengono ridimensionate entro 1600×1200 o 1200×1600. In assenza di segnale vengono salvate in IndexedDB insieme al GLB.</p></div>
 <div class="full"><label>Note</label><textarea id="note"></textarea></div>
 <div class="full" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">Salva punto</button><button id="send-queue-btn" class="btn secondary" type="button">Forza invio coda</button></div>
 <div class="full"><span id="queue-info" class="help">Controllo coda...</span></div>
 </div><div id="status" class="status"></div></form></section></main>
-
 <script>
 const cfg=window.APP_CONFIG;
 const supabaseClient=supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);
-const latInput=document.getElementById("lat"), lonInput=document.getElementById("lon"), statusBox=document.getElementById("status");
-const QUEUE_KEY="survey_3d_pending_points";
-
+const latInput=document.getElementById('lat'), lonInput=document.getElementById('lon'), statusBox=document.getElementById('status');
+const DB_NAME='survey_3d_offline_db', DB_VERSION=1, STORE_NAME='pending_submissions';
 function todayIsoDate(){return new Date().toISOString().slice(0,10)}
-function setStatus(type,msg){statusBox.className="status "+type;statusBox.innerHTML=msg}
-function safeName(v){return String(v||"file").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9_-]+/g,"_").replace(/^_+|_+$/g,"").toLowerCase().slice(0,60)||"file"}
-function getQueue(){try{return JSON.parse(localStorage.getItem(QUEUE_KEY)||"[]")}catch{return[]}}
-function setQueue(q){localStorage.setItem(QUEUE_KEY,JSON.stringify(q));updateQueueInfo()}
-function addToQueue(payload){const q=getQueue();q.push({id_locale:crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random(),created_local_at:new Date().toISOString(),payload});setQueue(q)}
-function updateQueueInfo(){const c=getQueue().length, info=document.getElementById("queue-info"), btn=document.getElementById("send-queue-btn");if(c===0){info.textContent="Coda vuota. Tutti i punti risultano inviati.";btn.disabled=true}else{info.textContent=c===1?"1 punto in coda da inviare.":c+" punti in coda da inviare.";btn.disabled=false}}
-
-function resizeImageFile(file){
- return new Promise((resolve,reject)=>{
-  const img=new Image(), url=URL.createObjectURL(file);
-  img.onload=()=>{
-   URL.revokeObjectURL(url);
-   const sw=img.naturalWidth, sh=img.naturalHeight, portrait=sh>sw;
-   const maxW=portrait?1200:1600, maxH=portrait?1600:1200;
-   const scale=Math.min(maxW/sw,maxH/sh,1);
-   const dw=Math.round(sw*scale), dh=Math.round(sh*scale);
-   const canvas=document.createElement("canvas"); canvas.width=dw; canvas.height=dh;
-   canvas.getContext("2d").drawImage(img,0,0,dw,dh);
-   canvas.toBlob(blob=>{
-    if(!blob) reject(new Error("Ridimensionamento foto non riuscito."));
-    else resolve(new File([blob],safeName(file.name.replace(/\.[^.]+$/,""))+".jpg",{type:"image/jpeg"}));
-   },"image/jpeg",0.82);
-  };
-  img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error("Impossibile leggere la foto."))};
-  img.src=url;
- });
-}
-
-async function uploadFile(path,file,contentType){
- const {error}=await supabaseClient.storage.from(cfg.STORAGE_BUCKET).upload(path,file,{contentType,upsert:false});
- if(error) throw error;
- const {data}=supabaseClient.storage.from(cfg.STORAGE_BUCKET).getPublicUrl(path);
- if(!data||!data.publicUrl) throw new Error("Upload riuscito, ma URL pubblico non disponibile.");
- return data.publicUrl;
-}
-
-async function uploadGlb(nome,timestamp){
- const input=document.getElementById("glb_file");
- if(!input.files.length) return null;
- const file=input.files[0];
- if(!file.name.toLowerCase().endsWith(".glb")) throw new Error("Il file selezionato non sembra un .glb.");
- if(file.size>200*1024*1024) throw new Error("File GLB troppo grande: supera 200 MB.");
- setStatus("ok","Caricamento modello GLB...");
- return uploadFile(`modelli/${safeName(nome)}/${timestamp}_${safeName(file.name.replace(/\.glb$/i,""))}.glb`,file,"model/gltf-binary");
-}
-
-async function uploadPhoto(inputId,nome,timestamp,label){
- const input=document.getElementById(inputId);
- if(!input.files.length) return null;
- const file=input.files[0];
- if(!file.type.startsWith("image/")) throw new Error(label+" non è un'immagine valida.");
- setStatus("ok","Ridimensionamento "+label+"...");
- const resized=await resizeImageFile(file);
- setStatus("ok","Caricamento "+label+"...");
- return uploadFile(`foto/${safeName(nome)}/${timestamp}_${label}_${safeName(file.name.replace(/\.[^.]+$/,""))}.jpg`,resized,"image/jpeg");
-}
-
-async function insertPoint(payload){const {error}=await supabaseClient.from(cfg.TABLE_NAME).insert(payload);if(error)throw error}
-async function flushQueue(show=true){
- const q=getQueue(); if(!q.length){if(show)setStatus("ok","Coda vuota.");updateQueueInfo();return}
- if(!navigator.onLine){if(show)setStatus("err","Sei offline.");return}
- const remaining=[]; let sent=0;
- for(const item of q){try{await insertPoint(item.payload);sent++}catch(e){remaining.push(item)}}
- setQueue(remaining);
- if(show)setStatus(remaining.length?"err":"ok", remaining.length?`${sent} inviati, ${remaining.length} ancora in coda.`:`${sent} punti inviati.`);
-}
-
-function useGps(){
- if(!navigator.geolocation){setStatus("err","Geolocalizzazione non supportata.");return}
- setStatus("ok","Acquisizione posizione GPS...");
- navigator.geolocation.getCurrentPosition(
-  p=>{latInput.value=Number(p.coords.latitude).toFixed(7);lonInput.value=Number(p.coords.longitude).toFixed(7);setStatus("ok","Coordinate GPS acquisite.")},
-  e=>setStatus("err","Errore GPS: "+e.message),
-  {enableHighAccuracy:true,timeout:10000,maximumAge:0}
- );
-}
-function resetForm(){document.getElementById("point-form").reset()}
-
-document.getElementById("point-form").addEventListener("submit",async e=>{
- e.preventDefault();
- const hasFiles=document.getElementById("glb_file").files.length||document.getElementById("foto1_file").files.length||document.getElementById("foto2_file").files.length;
- const payload={
-  nome:document.getElementById("nome").value.trim(),
-  descrizione:document.getElementById("descrizione").value.trim()||null,
-  lat:Number(latInput.value), lon:Number(lonInput.value),
-  modello_glb:null, foto_url:null, foto1_url:null, foto2_url:null,
-  data_rilievo:todayIsoDate(),
-  note:document.getElementById("note").value.trim()||null
- };
- if(!payload.nome||Number.isNaN(payload.lat)||Number.isNaN(payload.lon)){setStatus("err","Compila nome, latitudine e longitudine.");return}
- if(!navigator.onLine){
-  if(hasFiles){setStatus("err","Offline: posso mettere in coda solo punti senza file.");return}
-  addToQueue(payload); setStatus("ok","Punto salvato in coda locale."); resetForm(); return;
- }
- try{
-  const ts=new Date().toISOString().replaceAll(":","-").replaceAll(".","-");
-  payload.modello_glb=await uploadGlb(payload.nome,ts);
-  payload.foto1_url=await uploadPhoto("foto1_file",payload.nome,ts,"foto1");
-  payload.foto2_url=await uploadPhoto("foto2_file",payload.nome,ts,"foto2");
-  payload.foto_url=payload.foto1_url;
-  setStatus("ok","Salvataggio punto...");
-  await insertPoint(payload);
-  setStatus("ok","Punto salvato correttamente.");
-  resetForm(); flushQueue(false);
- }catch(error){
-  console.error(error);
-  if(hasFiles)setStatus("err","Errore: "+error.message+"<br>I file non possono essere salvati in coda offline.");
-  else{addToQueue(payload);setStatus("err","Supabase non ha risposto: punto salvato in coda locale.");resetForm()}
- }
-});
-document.getElementById("send-queue-btn").addEventListener("click",()=>flushQueue(true));
-window.addEventListener("online",()=>flushQueue(true));
-window.addEventListener("offline",()=>setStatus("err","Connessione assente."));
-updateQueueInfo(); if(navigator.onLine&&getQueue().length)flushQueue(false);
+function setStatus(type,msg){statusBox.className='status '+type;statusBox.innerHTML=msg}
+function safeName(v){return String(v||'file').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]+/g,'_').replace(/^_+|_+$/g,'').toLowerCase().slice(0,60)||'file'}
+function newLocalId(){return crypto.randomUUID?crypto.randomUUID():String(Date.now())+'_'+Math.random().toString(16).slice(2)}
+function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,DB_VERSION);req.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains(STORE_NAME))db.createObjectStore(STORE_NAME,{keyPath:'id'})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
+async function queuePut(item){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE_NAME,'readwrite');tx.objectStore(STORE_NAME).put(item);tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>{db.close();reject(tx.error)}})}
+async function queueGetAll(){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE_NAME,'readonly');const req=tx.objectStore(STORE_NAME).getAll();req.onsuccess=()=>{db.close();resolve(req.result||[])};req.onerror=()=>{db.close();reject(req.error)}})}
+async function queueDelete(id){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE_NAME,'readwrite');tx.objectStore(STORE_NAME).delete(id);tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>{db.close();reject(tx.error)}})}
+async function queueCount(){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE_NAME,'readonly');const req=tx.objectStore(STORE_NAME).count();req.onsuccess=()=>{db.close();resolve(req.result||0)};req.onerror=()=>{db.close();reject(req.error)}})}
+async function updateQueueInfo(){const info=document.getElementById('queue-info'), btn=document.getElementById('send-queue-btn');try{const count=await queueCount();if(count===0){info.textContent='Coda vuota. Tutti i punti risultano inviati.';btn.disabled=true}else{info.textContent=count===1?'1 segnalazione completa in coda offline.':count+' segnalazioni complete in coda offline.';btn.disabled=false}}catch(e){console.error(e);info.textContent='Errore lettura coda offline.';btn.disabled=true}}
+function resizeImageFile(file){return new Promise((resolve,reject)=>{const img=new Image(), url=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(url);const sw=img.naturalWidth, sh=img.naturalHeight, portrait=sh>sw, maxW=portrait?1200:1600, maxH=portrait?1600:1200, scale=Math.min(maxW/sw,maxH/sh,1);const canvas=document.createElement('canvas');canvas.width=Math.round(sw*scale);canvas.height=Math.round(sh*scale);canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);canvas.toBlob(blob=>{if(!blob)reject(new Error('Ridimensionamento foto non riuscito.'));else resolve(new File([blob],safeName(file.name.replace(/\.[^.]+$/,''))+'.jpg',{type:'image/jpeg'}))},'image/jpeg',0.82)};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Impossibile leggere la foto.'))};img.src=url})}
+async function buildSubmissionFromForm(){const id=newLocalId(), timestamp=new Date().toISOString().replaceAll(':','-').replaceAll('.','-');const nome=document.getElementById('nome').value.trim(), lat=Number(latInput.value), lon=Number(lonInput.value);if(!nome||Number.isNaN(lat)||Number.isNaN(lon))throw new Error('Compila nome, latitudine e longitudine.');const cleanPoint=safeName(nome);const payload={nome,descrizione:document.getElementById('descrizione').value.trim()||null,lat,lon,modello_glb:null,foto_url:null,foto1_url:null,foto2_url:null,data_rilievo:todayIsoDate(),note:document.getElementById('note').value.trim()||null};const files={glb:null,foto1:null,foto2:null};const glb=document.getElementById('glb_file');if(glb.files.length>0){const file=glb.files[0];if(!file.name.toLowerCase().endsWith('.glb'))throw new Error('Il file selezionato non sembra un .glb.');if(file.size>200*1024*1024)throw new Error('File GLB troppo grande: supera 200 MB.');files.glb={blob:file,path:`modelli/${cleanPoint}/${timestamp}_${id}_${safeName(file.name.replace(/\.glb$/i,''))}.glb`,contentType:'model/gltf-binary'}}const f1=document.getElementById('foto1_file');if(f1.files.length>0){const file=f1.files[0];if(!file.type.startsWith('image/'))throw new Error('Foto 1 non è immagine valida.');setStatus('ok','Ridimensionamento Foto 1...');files.foto1={blob:await resizeImageFile(file),path:`foto/${cleanPoint}/${timestamp}_${id}_foto1_${safeName(file.name.replace(/\.[^.]+$/,''))}.jpg`,contentType:'image/jpeg'}}const f2=document.getElementById('foto2_file');if(f2.files.length>0){const file=f2.files[0];if(!file.type.startsWith('image/'))throw new Error('Foto 2 non è immagine valida.');setStatus('ok','Ridimensionamento Foto 2...');files.foto2={blob:await resizeImageFile(file),path:`foto/${cleanPoint}/${timestamp}_${id}_foto2_${safeName(file.name.replace(/\.[^.]+$/,''))}.jpg`,contentType:'image/jpeg'}}return {id,created_local_at:new Date().toISOString(),payload,files}}
+async function uploadFile(path,file,contentType){const {error}=await supabaseClient.storage.from(cfg.STORAGE_BUCKET).upload(path,file,{contentType,upsert:true});if(error)throw error;const {data}=supabaseClient.storage.from(cfg.STORAGE_BUCKET).getPublicUrl(path);if(!data||!data.publicUrl)throw new Error('Upload riuscito, ma URL pubblico non disponibile.');return data.publicUrl}
+async function sendSubmission(item){const payload={...item.payload};if(item.files?.glb){setStatus('ok','Upload GLB in corso...');payload.modello_glb=await uploadFile(item.files.glb.path,item.files.glb.blob,item.files.glb.contentType)}if(item.files?.foto1){setStatus('ok','Upload Foto 1 in corso...');payload.foto1_url=await uploadFile(item.files.foto1.path,item.files.foto1.blob,item.files.foto1.contentType);payload.foto_url=payload.foto1_url}if(item.files?.foto2){setStatus('ok','Upload Foto 2 in corso...');payload.foto2_url=await uploadFile(item.files.foto2.path,item.files.foto2.blob,item.files.foto2.contentType)}setStatus('ok','Salvataggio punto su Supabase...');const {error}=await supabaseClient.from(cfg.TABLE_NAME).insert(payload);if(error)throw error}
+async function flushQueue(show=true){if(!navigator.onLine){if(show)setStatus('err','Sei offline. La coda resta salvata sul dispositivo.');await updateQueueInfo();return}const items=await queueGetAll();if(items.length===0){if(show)setStatus('ok','Coda vuota.');await updateQueueInfo();return}let sent=0, failed=0;for(const item of items){try{setStatus('ok','Invio segnalazione in coda: '+(sent+1)+' / '+items.length);await sendSubmission(item);await queueDelete(item.id);sent++}catch(e){console.error('Invio coda fallito:',e);failed++}}await updateQueueInfo();if(show)setStatus(failed===0?'ok':'err',failed===0?sent+' segnalazioni inviate.':sent+' inviate, '+failed+' ancora in coda.')}
+function useGps(){if(!navigator.geolocation){setStatus('err','Geolocalizzazione non supportata.');return}setStatus('ok','Acquisizione posizione GPS...');navigator.geolocation.getCurrentPosition(p=>{latInput.value=Number(p.coords.latitude).toFixed(7);lonInput.value=Number(p.coords.longitude).toFixed(7);setStatus('ok','Coordinate GPS acquisite.')},e=>setStatus('err','Errore GPS: '+e.message),{enableHighAccuracy:true,timeout:10000,maximumAge:0})}
+function resetForm(){document.getElementById('point-form').reset()}
+document.getElementById('point-form').addEventListener('submit',async event=>{event.preventDefault();try{const item=await buildSubmissionFromForm();if(!navigator.onLine){await queuePut(item);await updateQueueInfo();setStatus('ok','Nessun segnale: segnalazione completa salvata in coda offline, inclusi GLB e foto.');resetForm();return}try{await sendSubmission(item);setStatus('ok','Segnalazione inviata correttamente.');resetForm();await flushQueue(false)}catch(e){console.error(e);await queuePut(item);await updateQueueInfo();setStatus('err','Invio non riuscito: segnalazione completa salvata in coda offline, inclusi GLB e foto.');resetForm()}}catch(e){console.error(e);setStatus('err','Errore: '+e.message)}});
+document.getElementById('send-queue-btn').addEventListener('click',()=>flushQueue(true));
+window.addEventListener('online',()=>{setStatus('ok','Connessione ripristinata. Provo a inviare la coda...');flushQueue(true)});
+window.addEventListener('offline',()=>setStatus('err','Connessione assente. Le prossime segnalazioni complete resteranno in coda offline.'));
+updateQueueInfo();if(navigator.onLine)flushQueue(false);
 </script>
-<script>if("serviceWorker"in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js"))}</script>
+<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(err=>console.warn('Service worker non registrato:',err)))}</script>
 </body></html>
