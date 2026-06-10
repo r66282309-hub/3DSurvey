@@ -32,13 +32,13 @@ let labelsVisible=true;
 const allLabelMarkers=[];
 
 const baseLayers={
-  "Esri Satellite":esriImagery,
-  "Esri Topografica":esriTopo
+  "Ortofoto 2016":esriImagery,
+  "Topografica":esriTopo
 };
 
 const overlayLayers={
-  "Punti 3D / survey":pointsLayer,
-  "Punti sopralluogo accessibilità":accessLayer
+  "Sovralluogo":pointsLayer,
+  "Punti Boschi Tirso":accessLayer
 };
 
 L.control.layers(baseLayers,overlayLayers,{collapsed:false}).addTo(map);
