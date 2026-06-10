@@ -5,6 +5,38 @@
 <title>Survey punto 3D</title>
 <link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="assets/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="config.js"></script>
+
+<style>
+/* Barra avanzamento upload/invio */
+.status {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-wrap {
+  margin-top: 8px;
+  width: 100%;
+  height: 10px;
+  background: rgba(0,0,0,0.12);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: #ff8c00;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.progress-text {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+</style>
+
 </head>
 <body>
 <header class="topbar"><h1>Survey punto 3D</h1><a href="index.html">Mappa</a></header>
@@ -28,7 +60,86 @@ const supabaseClient=supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KE
 const latInput=document.getElementById('lat'), lonInput=document.getElementById('lon'), statusBox=document.getElementById('status');
 const DB_NAME='survey_3d_offline_db', DB_VERSION=1, STORE_NAME='pending_submissions';
 function todayIsoDate(){return new Date().toISOString().slice(0,10)}
-function setStatus(type,msg){statusBox.className='status '+type;statusBox.innerHTML=msg}
+function setProgress(message, percent = null, type = 'ok') {
+  statusBox.className = 'status ' + type;
+
+  const safePercent = percent === null
+    ? null
+    : Math.max(0, Math.min(100, Math.round(percent)));
+
+  if (safePercent === null) {
+    statusBox.innerHTML = message;
+    return;
+  }
+
+  statusBox.innerHTML = `
+    <div>${message}</div>
+    <div class="progress-wrap">
+      <div class="progress-bar" style="width:${safePercent}%"></div>
+    </div>
+    <div class="progress-text">${safePercent}%</div>
+  `;
+}
+
+function setStatus(type,msg){
+  if(type === 'ok') setProgress(msg, null, 'ok');
+  else setProgress(msg, null, 'err');
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function uploadFileWithProgress(path, file, contentType, label, basePercent, spanPercent) {
+  return new Promise((resolve, reject) => {
+    const url = `${cfg.SUPABASE_URL}/storage/v1/object/${cfg.STORAGE_BUCKET}/${path}`;
+    const xhr = new XMLHttpRequest();
+
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('apikey', cfg.SUPABASE_ANON_KEY);
+    xhr.setRequestHeader('Authorization', `Bearer ${cfg.SUPABASE_ANON_KEY}`);
+    xhr.setRequestHeader('Content-Type', contentType);
+    xhr.setRequestHeader('x-upsert', 'true');
+
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) {
+        const localPercent = (event.loaded / event.total) * 100;
+        const totalPercent = basePercent + (localPercent / 100) * spanPercent;
+        setProgress(`${label}: ${formatBytes(event.loaded)} / ${formatBytes(event.total)}`, totalPercent, 'ok');
+      } else {
+        setProgress(`${label}: caricamento in corso...`, basePercent, 'ok');
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const { data } = supabaseClient
+          .storage
+          .from(cfg.STORAGE_BUCKET)
+          .getPublicUrl(path);
+
+        if (!data || !data.publicUrl) {
+          reject(new Error('Upload riuscito, ma URL pubblico non disponibile.'));
+          return;
+        }
+
+        setProgress(`${label}: completato`, basePercent + spanPercent, 'ok');
+        resolve(data.publicUrl);
+      } else {
+        reject(new Error(`${label}: upload fallito (${xhr.status}) ${xhr.responseText || ''}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error(`${label}: errore di rete durante upload.`));
+    xhr.ontimeout = () => reject(new Error(`${label}: timeout durante upload.`));
+
+    xhr.timeout = 120000;
+    xhr.send(file);
+  });
+}
 function safeName(v){return String(v||'file').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]+/g,'_').replace(/^_+|_+$/g,'').toLowerCase().slice(0,60)||'file'}
 function newLocalId(){return crypto.randomUUID?crypto.randomUUID():String(Date.now())+'_'+Math.random().toString(16).slice(2)}
 function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,DB_VERSION);req.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains(STORE_NAME))db.createObjectStore(STORE_NAME,{keyPath:'id'})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
@@ -39,8 +150,71 @@ async function queueCount(){const db=await openDb();return new Promise((resolve,
 async function updateQueueInfo(){const info=document.getElementById('queue-info'), btn=document.getElementById('send-queue-btn');try{const count=await queueCount();if(count===0){info.textContent='Coda vuota. Tutti i punti risultano inviati.';btn.disabled=true}else{info.textContent=count===1?'1 segnalazione completa in coda offline.':count+' segnalazioni complete in coda offline.';btn.disabled=false}}catch(e){console.error(e);info.textContent='Errore lettura coda offline.';btn.disabled=true}}
 function resizeImageFile(file){return new Promise((resolve,reject)=>{const img=new Image(), url=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(url);const sw=img.naturalWidth, sh=img.naturalHeight, portrait=sh>sw, maxW=portrait?1200:1600, maxH=portrait?1600:1200, scale=Math.min(maxW/sw,maxH/sh,1);const canvas=document.createElement('canvas');canvas.width=Math.round(sw*scale);canvas.height=Math.round(sh*scale);canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);canvas.toBlob(blob=>{if(!blob)reject(new Error('Ridimensionamento foto non riuscito.'));else resolve(new File([blob],safeName(file.name.replace(/\.[^.]+$/,''))+'.jpg',{type:'image/jpeg'}))},'image/jpeg',0.82)};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Impossibile leggere la foto.'))};img.src=url})}
 async function buildSubmissionFromForm(){const id=newLocalId(), timestamp=new Date().toISOString().replaceAll(':','-').replaceAll('.','-');const nome=document.getElementById('nome').value.trim(), lat=Number(latInput.value), lon=Number(lonInput.value);if(!nome||Number.isNaN(lat)||Number.isNaN(lon))throw new Error('Compila nome, latitudine e longitudine.');const cleanPoint=safeName(nome);const payload={nome,descrizione:document.getElementById('descrizione').value.trim()||null,lat,lon,modello_glb:null,foto_url:null,foto1_url:null,foto2_url:null,data_rilievo:todayIsoDate(),note:document.getElementById('note').value.trim()||null};const files={glb:null,foto1:null,foto2:null};const glb=document.getElementById('glb_file');if(glb.files.length>0){const file=glb.files[0];if(!file.name.toLowerCase().endsWith('.glb'))throw new Error('Il file selezionato non sembra un .glb.');if(file.size>200*1024*1024)throw new Error('File GLB troppo grande: supera 200 MB.');files.glb={blob:file,path:`modelli/${cleanPoint}/${timestamp}_${id}_${safeName(file.name.replace(/\.glb$/i,''))}.glb`,contentType:'model/gltf-binary'}}const f1=document.getElementById('foto1_file');if(f1.files.length>0){const file=f1.files[0];if(!file.type.startsWith('image/'))throw new Error('Foto 1 non è immagine valida.');setStatus('ok','Ridimensionamento Foto 1...');files.foto1={blob:await resizeImageFile(file),path:`foto/${cleanPoint}/${timestamp}_${id}_foto1_${safeName(file.name.replace(/\.[^.]+$/,''))}.jpg`,contentType:'image/jpeg'}}const f2=document.getElementById('foto2_file');if(f2.files.length>0){const file=f2.files[0];if(!file.type.startsWith('image/'))throw new Error('Foto 2 non è immagine valida.');setStatus('ok','Ridimensionamento Foto 2...');files.foto2={blob:await resizeImageFile(file),path:`foto/${cleanPoint}/${timestamp}_${id}_foto2_${safeName(file.name.replace(/\.[^.]+$/,''))}.jpg`,contentType:'image/jpeg'}}return {id,created_local_at:new Date().toISOString(),payload,files}}
-async function uploadFile(path,file,contentType){const {error}=await supabaseClient.storage.from(cfg.STORAGE_BUCKET).upload(path,file,{contentType,upsert:true});if(error)throw error;const {data}=supabaseClient.storage.from(cfg.STORAGE_BUCKET).getPublicUrl(path);if(!data||!data.publicUrl)throw new Error('Upload riuscito, ma URL pubblico non disponibile.');return data.publicUrl}
-async function sendSubmission(item){const payload={...item.payload};if(item.files?.glb){setStatus('ok','Upload GLB in corso...');payload.modello_glb=await uploadFile(item.files.glb.path,item.files.glb.blob,item.files.glb.contentType)}if(item.files?.foto1){setStatus('ok','Upload Foto 1 in corso...');payload.foto1_url=await uploadFile(item.files.foto1.path,item.files.foto1.blob,item.files.foto1.contentType);payload.foto_url=payload.foto1_url}if(item.files?.foto2){setStatus('ok','Upload Foto 2 in corso...');payload.foto2_url=await uploadFile(item.files.foto2.path,item.files.foto2.blob,item.files.foto2.contentType)}setStatus('ok','Salvataggio punto su Supabase...');const {error}=await supabaseClient.from(cfg.TABLE_NAME).insert(payload);if(error)throw error}
+async function uploadFile(path,file,contentType){
+  return await uploadFileWithProgress(path, file, contentType, 'Upload file', 0, 95);
+}
+async function sendSubmission(item){
+  const payload = {...item.payload};
+
+  let steps = 1; // salvataggio riga tabella
+  if(item.files?.glb) steps++;
+  if(item.files?.foto1) steps++;
+  if(item.files?.foto2) steps++;
+
+  let stepIndex = 0;
+  const stepBase = () => (stepIndex / steps) * 100;
+  const stepSpan = () => 100 / steps;
+
+  if(item.files?.glb){
+    setProgress('Preparazione upload GLB...', stepBase(), 'ok');
+    payload.modello_glb = await uploadFileWithProgress(
+      item.files.glb.path,
+      item.files.glb.blob,
+      item.files.glb.contentType,
+      'Upload GLB',
+      stepBase(),
+      stepSpan()
+    );
+    stepIndex++;
+  }
+
+  if(item.files?.foto1){
+    setProgress('Preparazione upload Foto 1...', stepBase(), 'ok');
+    payload.foto1_url = await uploadFileWithProgress(
+      item.files.foto1.path,
+      item.files.foto1.blob,
+      item.files.foto1.contentType,
+      'Upload Foto 1',
+      stepBase(),
+      stepSpan()
+    );
+    payload.foto_url = payload.foto1_url;
+    stepIndex++;
+  }
+
+  if(item.files?.foto2){
+    setProgress('Preparazione upload Foto 2...', stepBase(), 'ok');
+    payload.foto2_url = await uploadFileWithProgress(
+      item.files.foto2.path,
+      item.files.foto2.blob,
+      item.files.foto2.contentType,
+      'Upload Foto 2',
+      stepBase(),
+      stepSpan()
+    );
+    stepIndex++;
+  }
+
+  setProgress('Salvataggio punto su Supabase...', stepBase(), 'ok');
+
+  const {error} = await supabaseClient
+    .from(cfg.TABLE_NAME)
+    .insert(payload);
+
+  if(error) throw error;
+
+  setProgress('Segnalazione completata.', 100, 'ok');
+}
 async function flushQueue(show=true){if(!navigator.onLine){if(show)setStatus('err','Sei offline. La coda resta salvata sul dispositivo.');await updateQueueInfo();return}const items=await queueGetAll();if(items.length===0){if(show)setStatus('ok','Coda vuota.');await updateQueueInfo();return}let sent=0, failed=0;for(const item of items){try{setStatus('ok','Invio segnalazione in coda: '+(sent+1)+' / '+items.length);await sendSubmission(item);await queueDelete(item.id);sent++}catch(e){console.error('Invio coda fallito:',e);failed++}}await updateQueueInfo();if(show)setStatus(failed===0?'ok':'err',failed===0?sent+' segnalazioni inviate.':sent+' inviate, '+failed+' ancora in coda.')}
 function useGps(){if(!navigator.geolocation){setStatus('err','Geolocalizzazione non supportata.');return}setStatus('ok','Acquisizione posizione GPS...');navigator.geolocation.getCurrentPosition(p=>{latInput.value=Number(p.coords.latitude).toFixed(7);lonInput.value=Number(p.coords.longitude).toFixed(7);setStatus('ok','Coordinate GPS acquisite.')},e=>setStatus('err','Errore GPS: '+e.message),{enableHighAccuracy:true,timeout:10000,maximumAge:0})}
 function resetForm(){document.getElementById('point-form').reset()}
