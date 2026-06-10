@@ -9,6 +9,16 @@
 <body>
 <header class="topbar"><h1>WebGIS punti 3D</h1><nav><a class="secondary" href="#" onclick="loadPoints();return false;">Aggiorna</a> <a href="survey.html">Inserisci punto</a></nav></header>
 <main id="map"></main>
+<div class="map-tools">
+  <button id="toggle-labels-btn" type="button" onclick="toggleAllLabels()">Etichette ON</button>
+</div>
+<div class="legend access-legend">
+  <div class="legend-title">Accessibilità</div>
+  <div><span class="legend-symbol access-yes"></span> SI</div>
+  <div><span class="legend-symbol access-no"></span> NO</div>
+  <div><span class="legend-symbol access-unknown"></span> Non valutato</div>
+  <div class="legend-note">Bordo arancione = punto sopralluogo</div>
+</div>
 <div id="photo-modal" class="photo-modal" onclick="closePhotoModal()"><div class="photo-modal-content" onclick="event.stopPropagation()"><div class="photo-modal-bar"><span id="photo-title">Foto</span><button onclick="closePhotoModal()">Chiudi</button></div><img id="photo-img" src="" alt="Foto punto"></div></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -18,6 +28,8 @@ const esriImagery=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/servi
 const esriTopo=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",{attribution:"Tiles &copy; Esri"});
 let pointsLayer=L.layerGroup().addTo(map);
 let accessLayer=L.layerGroup();
+let labelsVisible=true;
+const allLabelMarkers=[];
 
 const baseLayers={
   "Esri Satellite":esriImagery,
@@ -33,6 +45,29 @@ L.control.layers(baseLayers,overlayLayers,{collapsed:false}).addTo(map);
 function esc(v){if(v===null||v===undefined)return "";return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
 function js(v){return String(v||"").replaceAll("\\","\\\\").replaceAll("'","\\'").replaceAll('"','\\"').replaceAll("\n"," ")}
 function norm(p){if(!p)return "";p=String(p).trim();return p.startsWith("http")?p:(cfg.MODEL_BASE_PATH||"")+p}
+function registerLabelMarker(marker){
+ allLabelMarkers.push(marker);
+ return marker;
+}
+function setMarkerLabelVisible(marker,visible){
+ const tooltip=marker.getTooltip&&marker.getTooltip();
+ if(!tooltip)return;
+ if(visible){
+  marker.openTooltip();
+ }else{
+  marker.closeTooltip();
+ }
+}
+function applyLabelsVisibility(){
+ allLabelMarkers.forEach(marker=>setMarkerLabelVisible(marker,labelsVisible));
+ const btn=document.getElementById("toggle-labels-btn");
+ if(btn)btn.textContent=labelsVisible?"Etichette ON":"Etichette OFF";
+}
+function toggleAllLabels(){
+ labelsVisible=!labelsVisible;
+ applyLabelsVisibility();
+}
+
 function openPhotoModal(url,title){document.getElementById("photo-img").src=url;document.getElementById("photo-title").textContent=title||"Foto";document.getElementById("photo-modal").classList.add("open")}
 function closePhotoModal(){document.getElementById("photo-modal").classList.remove("open");document.getElementById("photo-img").src=""}
 function popupHtml(p){
@@ -57,7 +92,9 @@ function addPoint(p){
   offset:[10,0],
   className:"point-label"
  });
+ registerLabelMarker(marker);
  marker.addTo(pointsLayer);
+ setMarkerLabelVisible(marker,labelsVisible);
 }
 function accessColor(value){
  const v=String(value||"").trim().toLowerCase();
@@ -87,7 +124,9 @@ function addAccessPoint(p){
   offset:[10,0],
   className:"access-label"
  });
+ registerLabelMarker(marker);
  marker.addTo(accessLayer);
+ setMarkerLabelVisible(marker,labelsVisible);
 }
 async function loadAccessPoints(){
  accessLayer.clearLayers();
@@ -106,6 +145,7 @@ async function loadAccessPoints(){
  return b;
 }
 async function loadPoints(){
+ allLabelMarkers.length=0;
  pointsLayer.clearLayers();
  const {data,error}=await supabaseClient.from(cfg.TABLE_NAME).select("*").order("created_at",{ascending:false});
  if(error){
@@ -121,6 +161,7 @@ async function loadPoints(){
  const accessBounds=await loadAccessPoints();
  const allBounds=b.concat(accessBounds||[]);
  if(allBounds.length)map.fitBounds(allBounds,{padding:[40,40],maxZoom:18});
+ applyLabelsVisibility();
 }
 loadPoints();
 </script>
