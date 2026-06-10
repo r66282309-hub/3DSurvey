@@ -17,3 +17,92 @@ body{margin:0;font-family:Arial,sans-serif;background:#f3f4f6;color:#111827}.top
 .point-label::before {
   display: none;
 }
+
+/* --- Barra di avanzamento --- */
+
+function setProgress(message, percent = null, type = "ok") {
+  statusBox.className = "status " + type;
+
+  const safePercent = percent === null
+    ? null
+    : Math.max(0, Math.min(100, Math.round(percent)));
+
+  if (safePercent === null) {
+    statusBox.innerHTML = message;
+    return;
+  }
+
+  statusBox.innerHTML = `
+    <div>${message}</div>
+    <div class="progress-wrap">
+      <div class="progress-bar" style="width:${safePercent}%"></div>
+    </div>
+    <div class="progress-text">${safePercent}%</div>
+  `;
+}
+
+// Compatibilità con il codice già presente
+function setStatus(type, msg) {
+  if (type === "ok") {
+    setProgress(msg, null, "ok");
+  } else {
+    setProgress(msg, null, "err");
+  }
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function uploadFileWithProgress(path, file, contentType, label, basePercent, spanPercent) {
+  return new Promise((resolve, reject) => {
+    const url = `${cfg.SUPABASE_URL}/storage/v1/object/${cfg.STORAGE_BUCKET}/${path}`;
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.open("POST", url, true);
+    xhr.setRequestHeader("apikey", cfg.SUPABASE_ANON_KEY);
+    xhr.setRequestHeader("Authorization", `Bearer ${cfg.SUPABASE_ANON_KEY}`);
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.setRequestHeader("x-upsert", "true");
+
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) {
+        const localPercent = (event.loaded / event.total) * 100;
+        const totalPercent = basePercent + (localPercent / 100) * spanPercent;
+        setProgress(`${label}: ${formatBytes(event.loaded)} / ${formatBytes(event.total)}`, totalPercent, "ok");
+      } else {
+        setProgress(`${label}: caricamento in corso...`, basePercent, "ok");
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const { data } = supabaseClient
+          .storage
+          .from(cfg.STORAGE_BUCKET)
+          .getPublicUrl(path);
+
+        if (!data || !data.publicUrl) {
+          reject(new Error("Upload riuscito, ma URL pubblico non disponibile."));
+          return;
+        }
+
+        setProgress(`${label}: completato`, basePercent + spanPercent, "ok");
+        resolve(data.publicUrl);
+      } else {
+        reject(new Error(`${label}: upload fallito (${xhr.status}) ${xhr.responseText || ""}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error(`${label}: errore di rete durante l'upload.`));
+    xhr.ontimeout = () => reject(new Error(`${label}: timeout durante l'upload.`));
+
+    xhr.timeout = 120000;
+    xhr.send(file);
+  });
+}
+
